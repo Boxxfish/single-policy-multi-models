@@ -215,7 +215,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rl_template_rust"
+name = "multi_model_rust"
 version = "0.1.0"
 dependencies = [
  "pyo3",

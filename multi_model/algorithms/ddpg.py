@@ -3,7 +3,7 @@ from typing import Tuple
 import torch
 from torch import nn
 
-from rl_template.utils import polyak_avg
+from multi_model.utils import polyak_avg
 
 from .replay_buffer import ReplayBuffer
 

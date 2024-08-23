@@ -16,7 +16,7 @@ class RolloutBuffer:
 
     def __init__(
         self,
-        state_shape: torch.Size,
+        state_shapes: list[torch.Size],
         action_shape: torch.Size,
         action_probs_shape: torch.Size,
         action_dtype: torch.dtype,
@@ -24,7 +24,6 @@ class RolloutBuffer:
         num_steps: int,
     ):
         k = torch.float
-        state_shape = torch.Size([num_steps + 1, num_envs] + list(state_shape))
         action_shape = torch.Size([num_steps, num_envs] + list(action_shape))
         action_probs_shape = torch.Size(
             [num_steps, num_envs] + list(action_probs_shape)
@@ -33,7 +32,10 @@ class RolloutBuffer:
         self.num_steps = num_steps
         self.next = 0
         d = torch.device("cpu")
-        self.states = torch.zeros(state_shape, dtype=k, device=d, requires_grad=False)
+        self.states_all = []
+        for state_shape in state_shapes:
+            state_shape = torch.Size([num_steps + 1, num_envs] + list(state_shape))
+            self.states_all.append(torch.zeros(state_shape, dtype=k, device=d, requires_grad=False))
         self.actions = torch.zeros(
             action_shape, dtype=action_dtype, device=d, requires_grad=False
         )
@@ -56,7 +58,8 @@ class RolloutBuffer:
 
     def insert_step(
         self,
-        states: torch.Tensor,
+        policy_idxs: list[int],
+        states_all: list[torch.Tensor],
         actions: torch.Tensor,
         action_probs: torch.Tensor,
         rewards: List[float],
@@ -72,7 +75,8 @@ class RolloutBuffer:
         """
         d = torch.device("cpu")
         with torch.no_grad():
-            self.states[self.next].copy_(states)
+            for (i, states) in enumerate(states_all):
+                self.states_all[i][self.next].copy_(states)
             self.actions[self.next].copy_(actions)
             self.action_probs[self.next].copy_(action_probs)
             self.rewards[self.next].copy_(
@@ -91,18 +95,19 @@ class RolloutBuffer:
 
         self.next += 1
 
-    def insert_final_step(self, states: torch.Tensor):
+    def insert_final_step(self, states_all: list[torch.Tensor]):
         """
         Inserts the final observation observed.
         """
         with torch.no_grad():
-            self.states[self.next].copy_(states)
+            for (i, states) in enumerate(states_all):
+                self.states_all[i][self.next].copy_(states)
 
     def samples(
-        self, batch_size: int, discount: float, lambda_: float, v_net: nn.Module
+        self, batch_size: int, discount: float, lambda_: float, v_nets: list[nn.Module]
     ) -> list[
         Tuple[
-            torch.Tensor,
+            list[torch.Tensor],
             torch.Tensor,
             torch.Tensor,
             torch.Tensor,
@@ -123,7 +128,9 @@ class RolloutBuffer:
             advantages = torch.zeros(
                 [self.num_steps, self.num_envs], dtype=torch.float, device=d
             )
-            step_returns: torch.Tensor = v_net(self.states[self.next]).squeeze()
+            step_returns_all = []
+            for (v_net, states) in zip(v_nets, self.states_all):
+                step_returns_all.append(v_net(states[self.next]).squeeze())
 
             # Calculate advantage estimates and rewards to go
             state_values = step_returns.clone()

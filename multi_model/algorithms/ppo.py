@@ -10,10 +10,10 @@ from .rollout_buffer import RolloutBuffer
 
 
 def train_ppo(
-    p_net: nn.Module,
-    v_net: nn.Module,
-    p_opt: torch.optim.Optimizer,
-    v_opt: torch.optim.Optimizer,
+    p_nets: list[nn.Module],
+    v_nets: list[nn.Module],
+    p_opts: list[torch.optim.Optimizer],
+    v_opts: list[torch.optim.Optimizer],
     buffer: RolloutBuffer,
     device: torch.device,
     train_iters: int,
@@ -21,6 +21,7 @@ def train_ppo(
     discount: float,
     lambda_: float,
     epsilon: float,
+    entropy_coeff: float,
     gradient_steps: int = 1,
     use_masks: bool = False,
 ) -> Tuple[float, float]:
@@ -33,18 +34,22 @@ def train_ppo(
         adjusting weights.
         use_masks: If True, masks are passed to the model.
     """
-    p_net.train()
-    v_net_frozen = copy.deepcopy(v_net)
-    v_net.train()
-    if device.type != "cpu":
-        p_net.to(device)
-        v_net.to(device)
+    for (p_net, v_net) in zip(p_nets, v_nets):
+        p_net.train()
+        v_net_frozen = copy.deepcopy(v_net)
+        v_net.train()
+        if device.type != "cpu":
+            p_net.to(device)
+            v_net.to(device)
 
     total_v_loss = 0.0
     total_p_loss = 0.0
 
-    p_opt.zero_grad()
-    v_opt.zero_grad()
+    for (p_opt, v_opt) in zip(p_opts, v_opts):
+        p_opt.zero_grad()
+        v_opt.zero_grad()
+    
+    del p_net, v_net, p_opt, v_opt
 
     for _ in tqdm(range(train_iters), position=1):
         batches = buffer.samples(train_batch_size, discount, lambda_, v_net_frozen)
@@ -69,12 +74,14 @@ def train_ppo(
                 new_log_probs = p_net(prev_states, action_masks)
             else:
                 new_log_probs = p_net(prev_states)
-            new_act_probs = Categorical(logits=new_log_probs).log_prob(
-                actions.squeeze()
-            )
+            new_act_distr = Categorical(probs=new_log_probs.exp())
+            new_act_probs = new_act_distr.log_prob(actions.squeeze())
+            entropy = new_act_distr.entropy().mean()
             term1 = (new_act_probs - old_act_probs).exp() * advantages.squeeze()
             term2 = (1.0 + epsilon * advantages.squeeze().sign()) * advantages.squeeze()
-            p_loss = -term1.min(term2).mean() / gradient_steps
+            p_loss = (
+                -(term1.min(term2).mean() + entropy * entropy_coeff)
+            ) / gradient_steps
             p_loss.backward()
             total_p_loss += p_loss.item()
 

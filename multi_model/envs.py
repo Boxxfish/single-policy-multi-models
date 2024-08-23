@@ -136,4 +136,4 @@ class MetalDetectorEnv(gym.Env):
             if self.found_target:
                 target_channel[self.target_pos[1], self.target_pos[0]] = 1
             obs = np.stack([pos_channel, target_channel], 0)
-        return obs, {"task_idx": self.task_idx}
+        return obs, {"task_idx": self.task_idx, "found_target": self.found_target}
